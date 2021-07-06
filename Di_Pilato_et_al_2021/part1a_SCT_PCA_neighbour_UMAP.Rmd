@@ -1,0 +1,255 @@
+---
+title: "<span style='font-size: 18px'>R code</style>"
+author: "James Billingsley"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    code_folding: hide
+---
+
+```{r setup, include=FALSE, message=FALSE, warning = FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	error = TRUE,
+	fig.path = "./figures/",
+	message = FALSE,
+	warning = FALSE,
+	tidy = TRUE,
+	tidy.opts = list(width.cutoff = 60)
+)
+
+set.seed(42)
+```
+
+
+
+```{r libraries}
+library(Seurat)
+library(Matrix)
+library(RCurl)
+library(knitr)
+library(reticulate)
+library(ensembldb)
+library(AnnotationHub)
+library(tidyverse)
+library(sctransform)
+```
+
+
+32 single-cell transcriptome libraries generated from eight tumor samples were sequenced in two sequencing runs (16 libraries/run). A subset of the single-cell transcriptome data contains the D4M.3A-pOVA data which we called allntova (All cells, Not aPD1 Treated, pOVA immunogenic tumor). The allntova subset was used for all subsequent downstream analyses performed in this study (the single-cell transcriptome data that we provide on GEO is also only the allntova subset data). In this notebook the two separate sequencing runs are merged, the resulting raw gene matrix is filtered for high quality single-cell transcriptomes, the allntova subset of the filtered matrix is selected, and cell counts are normalized with the SCTransform function from the Seurat package. To reduce dimensions, Principal Component Analysis was performed using the function RunPCA from the Seurat package set to 15 Principal Components. Lastly, a nearest neighbor graph and UMAP were created with the functions FindNeighbors and runUMAP from the Seurat package
+
+
+
+
+Read data sets into merged seurat objects 
+
+```{r firstset, eval=F}
+
+sampleBarcodes<-scan("untitled\ text\ 14.txt", what="character")
+
+
+FileList<-sampleBarcodes
+
+
+for (i in 1:16){
+
+
+MatName<-paste("/Users/hbc/Orchestra/Pittet1-", FileList[i], "/Pittet-", FileList[i], ".mtx", sep = "")
+
+GenIds<-paste("/Users/hbc/Orchestra/Pittet1-", FileList[i], "/Pittet-", FileList[i], ".mtx.rownames", sep="")
+
+CellIds<-paste("/Users/hbc/Orchestra/Pittet1-", FileList[i], "/Pittet-", FileList[i], ".mtx.colnames", sep="")
+
+#readin the count matrix
+counts <- readMM(MatName)
+gene_ids <- read_tsv(GenIds, col_names = FALSE)$X1
+cell_ids <- read_tsv(CellIds, col_names = FALSE)$X1
+counts <- as(counts, "dgCMatrix")
+
+#add row names to the count matrix to be the gene IDs, and the column names of the count matrix to be the cell IDs.
+# Make the column names as the cell IDs and the row names as the gene IDs
+rownames(counts) <- gene_ids
+
+colnames(counts) <- cell_ids
+
+sample<-paste0("sample", i)
+
+#create a seurat object
+SO<-CreateSeuratObject(counts, project = sample, assay = "RNA",
+                   min.cells = 3, min.features = 200)
+                   
+                   
+                   
+assign(sample, SO)
+
+}
+
+
+mergDat1<-merge(x = sample1, y=list(sample2, sample3, sample4, sample5, sample6, sample7, sample8, sample9, sample10, sample11, sample12, sample13, sample14, sample15, sample16), add.cell.ids=FileList, project ="mergDat")
+
+```
+
+
+
+
+
+```{r secondset, eval=F}
+sampleBarcodes<-scan("./Desktop/untitled\ text\ 16.txt", what="character")
+
+FileList<-sampleBarcodes
+
+for (i in 1:16){
+
+
+MatName<-paste("/Users/hbc/Orchestra/Pittet2-", FileList[i], "/Pittet-", FileList[i], ".mtx", sep = "")
+
+GenIds<-paste("/Users/hbc/Orchestra/Pittet2-", FileList[i], "/Pittet-", FileList[i], ".mtx.rownames", sep="")
+
+CellIds<-paste("/Users/hbc/Orchestra/Pittet2-", FileList[i], "/Pittet-", FileList[i], ".mtx.colnames", sep="")
+
+#readin the count matrix
+counts <- readMM(MatName)
+gene_ids <- read_tsv(GenIds, col_names = FALSE)$X1
+cell_ids <- read_tsv(CellIds, col_names = FALSE)$X1
+counts <- as(counts, "dgCMatrix")
+
+#add row names to the count matrix to be the gene IDs, and the column names of the count matrix to be the cell IDs.
+# Make the column names as the cell IDs and the row names as the gene IDs
+rownames(counts) <- gene_ids
+
+colnames(counts) <- cell_ids
+
+sample<-paste0("sample2_", i)
+
+#create a seurat object
+SO<-CreateSeuratObject(counts, project = sample, assay = "RNA",
+                   min.cells = 3, min.features = 200)
+                   
+                   
+                   
+assign(sample, SO)
+}
+
+
+mergDat2<-merge(x = sample2_1, y=list(sample2_2, sample2_3, sample2_4, sample2_5, sample2_6, sample2_7, sample2_8, sample2_9, sample2_10, sample2_11, sample2_12, sample2_13, sample2_14, sample2_15, sample2_16), add.cell.ids=FileList, project ="mergDat2")
+
+```
+
+
+Merge the two datasets
+
+```{r merge, eval=F}
+mDc<-merge(x=mergDat1, y=mergDat2, project = "combinedSets")
+```
+
+```{r save, eval=F}
+#save seurat object mDc for convenience
+#saveRDS(mDc, file="~/Desktop/mDc.rds")
+
+```
+
+```{r readin}
+mDc<-readRDS(file="~/Desktop/mDc.rds")
+```
+
+Filter the data
+
+```{r filter, eval=T}
+
+log10GenesPerUMI <- log10(mDc@meta.data$nFeature_RNA) / 
+log10(mDc@meta.data$nCount_RNA)
+
+mDc$novelty <- log10GenesPerUMI
+
+ah <- AnnotationHub()
+
+ahDb <- query(ah, pattern = c("Mus musculus", "EnsDb"), ignore.case = TRUE)
+
+id <- ahDb %>%
+  mcols() %>%
+  rownames() %>%
+  tail(n = 1)
+
+edb <- ah[[id]]
+
+annotations <- genes(edb, return.type = "data.frame")
+
+annotations <- annotations %>%dplyr::select(gene_id, gene_name, seq_name, gene_biotype, description)
+
+mt <- annotations %>%
+  dplyr::filter(seq_name == "MT") %>%
+  dplyr::pull(gene_id)
+
+
+mDc[["percent.mt"]] <- PercentageFeatureSet(object = mDc, features = mt[which(mt %in% rownames(mDc))])
+
+
+
+mDc <-subset(mDc, subset = nCount_RNA > 350 & nCount_RNA < 6000 & nFeature_RNA > 250 & nFeature_RNA < 7000  & novelty > 0.9 & percent.mt < 10.5)
+```
+
+Transform the filtered data
+
+```{r sct, results = FALSE}
+mDc<-SCTransform(mDc)
+```
+
+
+Read in and add sample annotation to the data
+
+```{r sampleann, eval=T}
+
+
+PittetSampAn<-read.table("/Users/hbc/Desktop/PittetSampleAn.txt", sep="\t", h=T)
+
+
+#relevel the dataframe, order rows by levels of orig.ident, ie "sample1"
+
+
+mv<-match(levels(factor(mDc$orig.ident)),PittetSampAn$FileListName)
+
+
+mDc$expClass<-factor(mDc$orig.ident)
+
+levels(mDc$expClass)<-PittetSampAn$expclass[mv]
+
+```
+
+Subset the data to collect allntova cells
+
+```{r subset, eval=T}
+
+
+Idents(mDc)<-"expClass"
+
+SubDF<-subset(mDc, idents=c("CTRL_1immgen", "CTRL_2immgen") )
+
+```
+
+Run PCA, FindNeighbors, FindClusters, runUMAP
+
+```{r processing, results = FALSE}
+SubDF <- RunPCA(object = SubDF, npcs = 15, verbose = TRUE)
+
+SubDF <- FindNeighbors(object = SubDF, reduction = "pca", dims = 1:15) 
+
+SubDF <- FindClusters(object = SubDF, algorithm = 1,
+                       resolution = c(0.2, 0.4, 0.6, 0.8, 1.0, 1.2, 1.4,1.6, 1.8), random.seed = 42)
+                       
+                       
+SubDF <- RunUMAP(object = SubDF, dims=1:15 )
+```
+
+Plot UMAP reduction
+
+```{r plotumap}
+Idents(SubDF)<-"expClass"
+
+
+DimPlot(SubDF, reduction="umap", cols=c("black", "black")) & NoLegend()
+
+```
+
+```{r sessionInfo}
+sessionInfo()
+```
